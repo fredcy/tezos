@@ -44,7 +44,7 @@ let mine cctxt =
         [ v ; b ]
     | _ ->
         Lwt.ignore_result
-          (cctxt.message "Cannot parse fitness: %a" Fitness.pp bi.fitness);
+          (cctxt.message "Cannot parse fitness: %a" Environment.Fitness.pp bi.fitness);
         exit 2 in
   Client_node_rpcs.forge_block_header cctxt.rpc_config
     { shell = { net_id = bi.net_id ;
@@ -71,16 +71,19 @@ let commands () =
   let group = {name = "demo" ; title = "Some demo command" } in
   [
     command ~group ~desc: "A demo command"
+      no_options
       (fixed [ "demo" ])
-      (fun cctxt -> demo cctxt) ;
+      (fun () cctxt -> demo cctxt) ;
     command ~group ~desc: "A failing command"
+      no_options
       (fixed [ "fail" ])
-      (fun _cctxt ->
+      (fun () _cctxt ->
          Error.demo_error 101010
          >|= wrap_error) ;
     command ~group ~desc: "Mine an empty block"
+      no_options
       (fixed [ "mine" ])
-      (fun cctxt -> mine cctxt) ;
+      (fun () cctxt -> mine cctxt) ;
   ]
 
 let () =

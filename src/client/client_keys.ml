@@ -7,7 +7,7 @@
 (*                                                                        *)
 (**************************************************************************)
 
-module Ed25519 = Environment.Ed25519
+module Ed25519 = Tezos_protocol_environment.Ed25519
 
 module Public_key_hash = Client_aliases.Alias (struct
     type t = Ed25519.Public_key_hash.t
@@ -104,6 +104,19 @@ let list_keys cctxt =
        return (name, pkh, pkm, pks))
     l
 
+let alias_keys cctxt name =
+  Public_key_hash.load cctxt >>=? fun l ->
+  let rec find_key = function
+    | [] -> return None
+    | (key_name, pkh) :: tl ->
+        if String.(key_name = name)
+        then
+          Public_key.find_opt cctxt name >>=? fun pkm ->
+          Secret_key.find_opt cctxt name >>=? fun pks ->
+          return (Some (pkh, pkm, pks))
+        else find_key tl
+  in find_key l
+
 let group =
   { Cli_entries.name = "keys" ;
     title = "Commands for managing cryptographic keys" }
@@ -111,20 +124,26 @@ let group =
 let commands () =
   let open Cli_entries in
   let open Client_commands in
+  let show_private_switch =
+    switch
+      ~parameter:"-show-secret"
+      ~doc:"Show the private key" in
   [
 
     command ~group ~desc: "generate a pair of keys"
+      no_options
       (prefixes [ "gen" ; "keys" ]
        @@ Secret_key.fresh_alias_param
        @@ stop)
-      (fun name cctxt -> gen_keys cctxt name) ;
+      (fun () name cctxt -> gen_keys cctxt name) ;
 
     command ~group ~desc: "add a secret key to the wallet"
+      no_options
       (prefixes [ "add" ; "secret" ; "key" ]
        @@ Secret_key.fresh_alias_param
        @@ Secret_key.source_param
        @@ stop)
-      (fun name sk cctxt ->
+      (fun () name sk cctxt ->
          Public_key.find_opt cctxt name >>=? function
          | None ->
              let pk = Sodium.Sign.secret_key_to_public_key sk in
@@ -141,25 +160,28 @@ let commands () =
              Secret_key.add cctxt name sk) ;
 
     command ~group ~desc: "add a public key to the wallet"
+      no_options
       (prefixes [ "add" ; "public" ; "key" ]
        @@ Public_key.fresh_alias_param
        @@ Public_key.source_param
        @@ stop)
-      (fun name key cctxt ->
+      (fun () name key cctxt ->
          Public_key_hash.add cctxt
            name (Ed25519.Public_key.hash key) >>=? fun () ->
          Public_key.add cctxt name key) ;
 
     command ~group ~desc: "add an ID a public key hash to the wallet"
+      no_options
       (prefixes [ "add" ; "identity" ]
        @@ Public_key_hash.fresh_alias_param
        @@ Public_key_hash.source_param
        @@ stop)
-      (fun name hash cctxt -> Public_key_hash.add cctxt name hash) ;
+      (fun () name hash cctxt -> Public_key_hash.add cctxt name hash) ;
 
     command ~group ~desc: "list all public key hashes and associated keys"
+      no_options
       (fixed [ "list" ; "known" ; "identities" ])
-      (fun cctxt ->
+      (fun () cctxt ->
          list_keys cctxt >>=? fun l ->
          iter_s
            (fun (name, pkh, pkm, pks) ->
@@ -170,9 +192,36 @@ let commands () =
               return ())
            l) ;
 
+    command ~group ~desc: "show the keys associated with an identity"
+      (args1 show_private_switch)
+      (prefixes [ "show" ; "identity"]
+       @@ Public_key_hash.alias_param
+       @@ stop)
+      (fun show_private (name, _) cctxt ->
+         let ok_lwt x = x >>= (fun x -> return x) in
+         alias_keys cctxt name >>=? fun key_info ->
+         match key_info with
+         | None -> ok_lwt @@ cctxt.message "No keys found for identity"
+         | Some (hash, pub, priv) ->
+             Public_key_hash.to_source cctxt hash >>=? fun hash ->
+             ok_lwt @@ cctxt.message "Hash: %s" hash >>=? fun () ->
+             match pub with
+             | None -> return ()
+             | Some pub ->
+                 Public_key.to_source cctxt pub >>=? fun pub ->
+                 ok_lwt @@ cctxt.message "Public Key: %s" pub >>=? fun () ->
+                 if show_private then
+                   match priv with
+                   | None -> return ()
+                   | Some priv ->
+                       Secret_key.to_source cctxt priv >>=? fun priv ->
+                       ok_lwt @@ cctxt.message "Secret Key: %s" priv
+                 else return ()) ;
+
     command ~group ~desc: "forget all keys"
+      no_options
       (fixed [ "forget" ; "all" ; "keys" ])
-      (fun cctxt ->
+      (fun () cctxt ->
          fail_unless cctxt.config.force
            (failure "this can only used with option -force true") >>=? fun () ->
          Public_key.save cctxt [] >>=? fun () ->

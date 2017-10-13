@@ -418,7 +418,7 @@ let rec interp
               let cmpres = Script_int.compare a b in
               let cmpres = Script_int.of_int cmpres in
               logged_return (Item (cmpres, rest), qta - 1, ctxt)
-          | Compare Key_key, Item (a, Item (b, rest)) ->
+          | Compare Key_hash_key, Item (a, Item (b, rest)) ->
               let cmpres = Ed25519.Public_key_hash.compare a b in
               let cmpres = Script_int.of_int cmpres in
               logged_return (Item (cmpres, rest), qta - 1, ctxt)
@@ -540,10 +540,11 @@ let rec interp
               let now = Timestamp.current ctxt in
               logged_return (Item (now, rest), qta - 1, ctxt)
           | Check_signature, Item (key, Item ((signature, message), rest)) ->
-              Public_key.get ctxt key >>=? fun key ->
               let message = MBytes.of_string message in
               let res = Ed25519.Signature.check key signature message in
               logged_return (Item (res, rest), qta - 1, ctxt)
+          | Hash_key, Item (key, rest) ->
+              logged_return (Item (Ed25519.Public_key.hash key, rest), qta -1, ctxt)
           | H ty, Item (v, rest) ->
               let hash = Script.hash_expr (unparse_data ty v) in
               logged_return (Item (hash, rest), qta - 1, ctxt)
@@ -567,21 +568,12 @@ let rec interp
 (* ---- contract handling ---------------------------------------------------*)
 
 and execute ?log origination orig source ctxt storage script amount arg qta =
-  let { Script.storage ; storage_type } = storage in
-  let { Script.code ; arg_type ; ret_type } = script in
-  (Lwt.return (parse_ty arg_type)) >>=? fun (Ex_ty arg_type) ->
-  (Lwt.return (parse_ty ret_type)) >>=? fun (Ex_ty ret_type) ->
-  (Lwt.return (parse_ty storage_type)) >>=? fun (Ex_ty storage_type) ->
-  let arg_type_full = Pair_t (arg_type, storage_type) in
-  let ret_type_full = Pair_t (ret_type, storage_type) in
-  trace
-    (Ill_typed_contract (code, arg_type, ret_type, storage_type, []))
-    (parse_lambda ~storage_type ctxt arg_type_full ret_type_full code) >>=? fun lambda ->
+  parse_script ctxt storage script
+  >>=? fun (Ex_script { code; arg_type; ret_type; storage; storage_type }) ->
   parse_data ctxt arg_type arg >>=? fun arg ->
-  parse_data ctxt storage_type storage >>=? fun storage ->
   trace
-    (Runtime_contract_error (source, code, arg_type, ret_type, storage_type))
-    (interp ?log origination qta orig source amount ctxt lambda (arg, storage))
+    (Runtime_contract_error (source, script.code, arg_type, ret_type, storage_type))
+    (interp ?log origination qta orig source amount ctxt code (arg, storage))
   >>=? fun (ret, qta, ctxt, origination) ->
   let ret, storage = ret in
   return (unparse_data storage_type storage,

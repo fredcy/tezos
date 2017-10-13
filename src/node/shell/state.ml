@@ -84,10 +84,18 @@ let read_chain_store { chain_state } f =
     f state.chain_store state.data
   end
 
-let update_chain_store { chain_state } f =
+let update_chain_store { net_id ; context_index ; chain_state } f =
   Shared.use chain_state begin fun state ->
     f state.chain_store state.data >>= fun (data, res) ->
-    Utils.iter_option data ~f:(fun data -> state.data <- data) ;
+    Lwt_utils.may data
+      ~f:begin fun data ->
+        state.data <- data ;
+        Shared.use context_index begin fun context_index ->
+          Context.set_head context_index net_id
+            data.current_head.contents.context
+        end >>= fun () ->
+        Lwt.return_unit
+      end >>= fun () ->
     Lwt.return res
   end
 
@@ -566,6 +574,50 @@ module Protocol = struct
         ~init:Protocol_hash.Set.empty
         ~f:(fun x acc -> Lwt.return (Protocol_hash.Set.add x acc))
     end
+
+end
+
+module Registred_protocol = struct
+
+  module type T = sig
+    val hash: Protocol_hash.t
+    include Updater.RAW_PROTOCOL with type error := error
+                                  and type 'a tzresult := 'a tzresult
+    val complete_b58prefix : Context.t -> string -> string list Lwt.t
+  end
+
+  let build_v1 hash =
+    let (module F) = Tezos_protocol_registerer.get_exn hash in
+    let module Name = struct
+      let name = Protocol_hash.to_b58check hash
+    end in
+    let module Env = Tezos_protocol_environment.Make(Name)() in
+    (module struct
+      let hash = hash
+      module P = F(Env)
+      include P
+      include Updater.WrapProtocol(Name)(Env)(P)
+      let complete_b58prefix = Env.Context.complete
+    end : T)
+
+  module VersionTable = Protocol_hash.Table
+
+  let versions : (module T) VersionTable.t =
+    VersionTable.create 20
+
+  let mem hash =
+    VersionTable.mem versions hash || Tezos_protocol_registerer.mem hash
+
+  let get_exn hash =
+    try VersionTable.find versions hash
+    with Not_found ->
+      let proto = build_v1 hash in
+      VersionTable.add versions hash proto ;
+      proto
+
+  let get hash =
+    try Some (get_exn hash)
+    with Not_found -> None
 
 end
 

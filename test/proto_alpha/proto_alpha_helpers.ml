@@ -7,9 +7,7 @@
 (*                                                                        *)
 (**************************************************************************)
 
-open Client_embedded_proto_alpha
-open Tezos_context
-open Client_alpha
+module Ed25519 = Environment.Ed25519
 
 let (//) = Filename.concat
 
@@ -35,11 +33,17 @@ let activate_alpha () =
     fitness dictator_sk
 
 let init ?(sandbox = "sandbox.json") () =
-  Unix.chdir (Filename.dirname (Filename.dirname Sys.executable_name)) ;
+  (* Handles relative path on OSX *)
+  let executable_path =
+    if Filename.is_relative Sys.argv.(0)
+    then Filename.concat (Sys.getcwd ()) Sys.argv.(0)
+    else Sys.argv.(0) in
+  Unix.chdir (Filename.dirname executable_path) ;
+  Unix.chdir ".." ;
   let pid =
     Node_helpers.fork_node
       ~port:rpc_config.port
-      ~sandbox:(Filename.dirname Sys.executable_name // sandbox)
+      ~sandbox:(Filename.dirname executable_path // sandbox)
       () in
   activate_alpha () >>=? fun hash ->
   return (pid, hash)
@@ -310,7 +314,7 @@ module Assert = struct
     equal_pkh ~msg actual_delegate expected_delegate
 
   let ecoproto_error f = function
-    | Register_client_embedded_proto_alpha.Ecoproto_error errors ->
+    | Ecoproto_error errors ->
         List.exists f errors
     | _ -> false
 
@@ -335,7 +339,7 @@ module Assert = struct
     Assert.contain_error ~msg ~f:(ecoproto_error (fun _ -> true))
 
   let unknown_contract ~msg =
-    let open Client_embedded_proto_alpha.Storage_functors in
+    let open Storage_functors in
     Assert.contain_error ~msg ~f:begin ecoproto_error (function
         | Storage_error _ -> true
         | _ -> false)
@@ -425,7 +429,7 @@ module Mining = struct
   let endorsement_reward block =
     Client_proto_rpcs.Header.priority rpc_config block >>=? fun prio ->
     Mining.endorsement_reward ~block_priority:prio >|=
-    Register_client_embedded_proto_alpha.wrap_error >>|?
+    wrap_error >>|?
     Tez.to_cents
 
 end
