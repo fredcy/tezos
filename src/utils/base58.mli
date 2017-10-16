@@ -64,6 +64,7 @@ module Alphabet : sig
   val ripple: t
   val flickr: t
   val make: string -> t
+  val all_in_alphabet :  t -> string -> bool
 end
 
 (** Encoder for a given kind of data. *)
