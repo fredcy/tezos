@@ -44,17 +44,6 @@ module Alphabet = struct
 
   let default = bitcoin
 
-  module CharSet = Set.Make(Char)
-
-  let all_in_alphabet alphabet string =
-    let to_char_list str =
-      List.map (fun s -> String.get s 0) (Str.split (Str.regexp "") str) in
-    let chars = List.fold_left
-      (fun set char -> CharSet.add char set)
-      CharSet.empty
-      (to_char_list alphabet.encode)
-    in List.for_all (fun c -> CharSet.mem c chars) (to_char_list string)
-
 end
 
 let count_trailing_char s c =

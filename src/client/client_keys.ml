@@ -68,46 +68,6 @@ let gen_keys ?seed cctxt name =
     "I generated a brand new pair of keys under the name '%s'." name >>= fun () ->
   return ()
 
-let gen_keys_containing ?(prefix=false) containing name cctxt =
-  if not @@ Base58.Alphabet.all_in_alphabet Base58.Alphabet.bitcoin containing
-  then begin Printf.printf
-      "String '%s' cannot be written in alphabet" name;
-    return () end
-  else Public_key_hash.mem cctxt name >>=? fun name_exists ->
-    if name_exists
-    then begin Printf.printf
-        "Key for name '%s' already exists. Use -force to update." name;
-      return () end
-    else
-      begin
-        Format.printf "This process uses a brute force search and \
-                       may take several hours to find a key.@,@.";
-        let matches =
-          if prefix then
-            let containing_tz1 = "tz1" ^ containing in
-            let prefix_len = String.length containing_tz1 in
-            (fun key -> (String.sub key 0 prefix_len) = containing_tz1)
-          else
-            let re = Str.regexp_string containing in
-            (fun key -> try ignore (Str.search_forward re key 0); true
-              with Not_found -> false) in
-        let rec help () =
-          let seed = Seed.generate () in
-          let secret_key, public_key = Sodium.Sign.seed_keypair seed in
-          let hash = Ed25519.Public_key_hash.to_b58check @@ Ed25519.Public_key.hash public_key in
-          if matches hash
-          then
-            Secret_key.add cctxt name secret_key >>=? fun () ->
-            Public_key.add cctxt name public_key >>=? fun () ->
-            Public_key_hash.add cctxt name (Ed25519.Public_key.hash public_key) >>=? fun () ->
-            return hash
-          else help () in
-        help () >>=? fun key_hash ->
-        cctxt.message
-          "Generated '%s' under the name '%s'." key_hash name >>= fun () ->
-        return ()
-      end
-
 let check_keys_consistency pk sk =
   let message = MBytes.of_string "Voulez-vous coucher avec moi, ce soir ?" in
   let signature = Ed25519.sign sk message in
@@ -177,16 +137,6 @@ let commands () =
        @@ stop)
       (fun () name cctxt -> gen_keys cctxt name) ;
 
-    command ~group ~desc: "Generate keys with the given prefix"
-      (args1 (switch ~doc:"The key must begin with tz1[containing]" ~parameter:"-prefix"))
-      (prefixes [ "gen" ; "vanity" ; "key" ; "with" ]
-       @@ string ~name:"str" ~desc:"String key must contain"
-       @@ prefixes [ "for" ]
-       @@ Secret_key.fresh_alias_param
-       @@ stop)
-      (fun prefix containing name cctxt ->
-         gen_keys_containing ~prefix containing name cctxt) ;
-
     command ~group ~desc: "add a secret key to the wallet"
       no_options
       (prefixes [ "add" ; "secret" ; "key" ]
@@ -206,7 +156,7 @@ let commands () =
                (check_keys_consistency pk sk || cctxt.config.force)
                (failure
                   "public and secret keys '%s' don't correspond, \
-                   please don't use -force" name) >>=? fun () ->
+                   please don't use -force true" name) >>=? fun () ->
              Secret_key.add cctxt name sk) ;
 
     command ~group ~desc: "add a public key to the wallet"
